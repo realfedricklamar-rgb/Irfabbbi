@@ -13,8 +13,8 @@ on:
 jobs:
   interactive_ssh_session:
     runs-on: ubuntu-latest # Standard Linux GitHub Hosted Runner
-    # FIX APPLIED HERE: Explicitly cast to integer
-    timeout-minutes: ${{ github.event.inputs.session_duration_minutes | int }} 
+    # FIX APPLIED HERE: Use arithmetic to force integer evaluation
+    timeout-minutes: ${{ github.event.inputs.session_duration_minutes + 0 }} 
     
     steps:
     - name: Set up SSH server and Tmux
@@ -70,8 +70,8 @@ jobs:
         echo "Once connected, attach to the tmux session:"
         echo "  tmux attach-session -t persistent_session"
         echo " "
-        # Ensure the `MAX_DURATION_SECONDS` also correctly converts the input to int
-        echo "This job will run for a maximum of ${{ github.event.inputs.session_duration_minutes | int }} minutes."
+        # FIX APPLIED HERE: Use arithmetic to force integer evaluation
+        echo "This job will run for a maximum of ${{ github.event.inputs.session_duration_minutes + 0 }} minutes."
         echo "=========================================================="
         
         # Start a detached tmux session where you can run commands
@@ -85,7 +85,8 @@ jobs:
         # Keep the GitHub Actions step alive.
         # We use a simple sleep for the duration, this will block the step.
         # While this is sleeping, you can connect via SSH and interact with tmux.
-        MAX_DURATION_SECONDS=$(( ${{ github.event.inputs.session_duration_minutes | int }} * 60 ))
+        # FIX APPLIED HERE: Use arithmetic to force integer evaluation for shell arithmetic
+        MAX_DURATION_SECONDS=$(( ${{ github.event.inputs.session_duration_minutes + 0 }} * 60 ))
         echo "Holding job open for $MAX_DURATION_SECONDS seconds..."
         sleep $MAX_DURATION_SECONDS || true
         
