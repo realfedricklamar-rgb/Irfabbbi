@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       session_duration_minutes:
-        description: 'Maximum duration for the SSH session (minutes, max 360 for GitHub hosted)'
+        description: 'Maximum duration for the SSH session (minutes, max 360)'
         required: true
         default: 360
         type: number
@@ -13,88 +13,83 @@ on:
 jobs:
   interactive_ssh_session:
     runs-on: ubuntu-latest
-    
-    # WORKAROUND: Forcing the input through a single-value matrix evaluates 
-    # the expression early, providing a pure integer to timeout-minutes.
-    strategy:
-      matrix:
-        duration: [ "${{ inputs.session_duration_minutes }}" ]
+    # Hardcoded global safety net to prevent infinite hangs if something goes wrong.
+    # The actual user timeout is controlled dynamically inside the steps below.
+    timeout-minutes: 360
 
-    timeout-minutes: ${{ matrix.duration }}
-    
     steps:
-    - name: Set up SSH server and Tmux
+    - name: Configure SSH and Tmux Environment
       run: |
-        sudo apt-get update
-        sudo apt-get install -y openssh-server tmux
+        sudo apt-get update && sudo apt-get install -y openssh-server tmux
         
-        # Configure SSH for passwordless login (using temp key) and allow root login
+        # Security & access tweaks for direct root access during this interactive session
         sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
         sudo sed -i 's/PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
         sudo sed -i 's/#StrictHostKeyChecking ask/StrictHostKeyChecking no/' /etc/ssh/ssh_config
         
-        # Restart SSH service
         sudo service ssh restart
-        
-        echo "SSH server and Tmux installed and configured."
+        echo "✅ SSH server and Tmux environment initialized."
       shell: bash
 
-    - name: Generate temporary SSH key pair
+    - name: Generate One-Time SSH Key Pair
       id: generate_key
       run: |
-        ssh-keygen -t rsa -b 2048 -f ./id_rsa -N ""
-        cat ./id_rsa.pub > authorized_keys
-        sudo mv authorized_keys /root/.ssh/authorized_keys
-        sudo chmod 600 /root/.ssh/authorized_keys
-        sudo chown root:root /root/.ssh/authorized_keys
+        # Generate non-interactive SSH keypair
+        ssh-keygen -t ed25519 -f ./id_ed25519 -N ""
         
-        # Output the private key for the user to connect
-        echo "::add-mask::$(cat ./id_rsa)" 
+        sudo mkdir -p /root/.ssh
+        cat ./id_ed25519.pub | sudo tee /root/.ssh/authorized_keys > /dev/null
+        sudo chmod 600 /root/.ssh/authorized_keys
+        sudo chmod 700 /root/.ssh
+        sudo chown -R root:root /root/.ssh
+        
+        # Safely register the private key to GitHub step outputs
         echo "PRIVATE_KEY<<EOF" >> $GITHUB_OUTPUT
-        cat ./id_rsa >> $GITHUB_OUTPUT
+        cat ./id_ed25519 >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
         
-        echo "Temporary SSH key generated and configured for root."
+        echo "✅ Temporary ED25519 SSH keys configured for root access."
       shell: bash
 
-    - name: Start Tmux session and keep job alive
+    - name: Start Tmux and Keep Session Alive
       run: |
-        # Get the IP address of the runner
         RUNNER_IP=$(hostname -I | awk '{print $1}')
+        DURATION_MINUTES=${{ inputs.session_duration_minutes }}
+        DURATION_SECONDS=$(( DURATION_MINUTES * 60 ))
         
         echo "=========================================================="
-        echo "SSH Connection Details:"
-        echo "  Hostname/IP: $RUNNER_IP"
-        echo "  User: root"
-        echo "  Port: 22 (default)"
-        echo " "
-        echo "To connect, save the private key to a file (e.g., runner_key.pem) and then run:"
-        echo "  chmod 600 runner_key.pem"
-        echo "  ssh -i runner_key.pem root@$RUNNER_IP"
-        echo " "
-        echo "Once connected, attach to the tmux session:"
-        echo "  tmux attach-session -t persistent_session"
-        echo " "
-        echo "This job will run for a maximum of ${{ matrix.duration }} minutes."
+        echo "🚀 INTERACTIVE SSH SESSION ACTIVE"
+        echo "=========================================================="
+        echo "Host IP:     $RUNNER_IP"
+        echo "User:        root"
+        echo "Port:        22"
+        echo "Max Runtime: $DURATION_MINUTES minutes ($DURATION_SECONDS seconds)"
+        echo "----------------------------------------------------------"
+        echo "Instructions:"
+        echo "1. Save the private key from the previous step as 'runner.key'"
+        echo "2. Run: chmod 600 runner.key"
+        echo "3. Run: ssh -i runner.key root@$RUNNER_IP"
+        echo "4. Once connected, attach to your persistent shell workspace:"
+        echo "   tmux attach -t persistent_session"
         echo "=========================================================="
         
-        # Start a detached tmux session
+        # Spin up background tmux session with a warm welcome prompt
         sudo tmux new-session -d -s persistent_session
-        sudo tmux send-keys -t persistent_session "echo 'Welcome to your persistent SSH session!'" C-m
-        sudo tmux send-keys -t persistent_session "echo 'Run your commands here. Use Ctrl+b d to detach.'" C-m
+        sudo tmux send-keys -t persistent_session "echo 'Welcome to your persistent runner environment!'" C-m
+        sudo tmux send-keys -t persistent_session "echo 'Type your commands here. Detach anytime via Ctrl+B followed by D.'" C-m
         sudo tmux send-keys -t persistent_session "bash" C-m
         
-        echo "Tmux session 'persistent_session' started."
+        echo "⏳ Keeping session alive. Terminal will stay responsive until timeout or manual cancellation..."
         
-        # Keep the GitHub Actions step alive.
-        MAX_DURATION_SECONDS=$(( ${{ matrix.duration }} * 60 ))
-        echo "Holding job open for $MAX_DURATION_SECONDS seconds..."
-        sleep $MAX_DURATION_SECONDS || true
+        # Keeps step running securely for the requested period without triggering parser errors
+        sleep $DURATION_SECONDS || true
         
-        echo "Job duration reached. This runner will now be destroyed."
+        echo "🛑 Allocation time expired. Tearing down environment."
       shell: bash
 
-    - name: Final cleanup (optional)
+    - name: Graceful Teardown
       if: always()
       run: |
-        echo "Performing final cleanup before runner destruction."
+        echo "Cleaning session contexts, killing background processes, and destroying runner."
+        sudo tmux kill-server 2>/dev/null || true
+        sudo service ssh stop 2>/dev/null || true
