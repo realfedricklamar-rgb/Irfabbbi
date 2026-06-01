@@ -1,0 +1,99 @@
+# .github/workflows/hosted-persistent-ssh.yml
+name: Hosted Persistent SSH Session
+
+on:
+  workflow_dispatch:
+    inputs:
+      session_duration_minutes:
+        description: 'Maximum duration for the SSH session (minutes, max 360 for GitHub hosted)'
+        required: true
+        default: '360' # 6 hours, GitHub's typical max for hosted runners
+        type: string
+
+jobs:
+  interactive_ssh_session:
+    runs-on: ubuntu-latest # Standard Linux GitHub Hosted Runner
+    timeout-minutes: ${{ github.event.inputs.session_duration_minutes }} # Set job timeout to match requested duration
+    
+    steps:
+    - name: Set up SSH server and Tmux
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y openssh-server tmux
+        
+        # Configure SSH for passwordless login (using temp key) and allow root login
+        # This is for temporary interactive access, not long-term security.
+        sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+        sudo sed -i 's/PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+        sudo sed -i 's/#StrictHostKeyChecking ask/StrictHostKeyChecking no/' /etc/ssh/ssh_config
+        
+        # Restart SSH service
+        sudo service ssh restart
+        
+        echo "SSH server and Tmux installed and configured."
+      shell: bash
+
+    - name: Generate temporary SSH key pair
+      id: generate_key
+      run: |
+        ssh-keygen -t rsa -b 2048 -f ./id_rsa -N ""
+        cat ./id_rsa.pub > authorized_keys
+        sudo mv authorized_keys /root/.ssh/authorized_keys
+        sudo chmod 600 /root/.ssh/authorized_keys
+        sudo chown root:root /root/.ssh/authorized_keys
+        
+        # Output the private key for the user to connect
+        echo "::add-mask::$(cat ./id_rsa)" # Mask the key in logs
+        echo "PRIVATE_KEY<<EOF" >> $GITHUB_OUTPUT
+        cat ./id_rsa >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        
+        echo "Temporary SSH key generated and configured for root."
+      shell: bash
+
+    - name: Start Tmux session and keep job alive
+      run: |
+        # Get the IP address of the runner (GitHub hosted runners have a dynamic IP)
+        RUNNER_IP=$(hostname -I | awk '{print $1}')
+        
+        echo "=========================================================="
+        echo "SSH Connection Details:"
+        echo "  Hostname/IP: $RUNNER_IP"
+        echo "  User: root"
+        echo "  Port: 22 (default)"
+        echo " "
+        echo "To connect, save the private key (output in 'Generate temporary SSH key pair' step) to a file (e.g., runner_key.pem) and then run:"
+        echo "  chmod 600 runner_key.pem"
+        echo "  ssh -i runner_key.pem root@$RUNNER_IP"
+        echo " "
+        echo "Once connected, attach to the tmux session:"
+        echo "  tmux attach-session -t persistent_session"
+        echo " "
+        echo "This job will run for a maximum of ${{ github.event.inputs.session_duration_minutes }} minutes."
+        echo "=========================================================="
+        
+        # Start a detached tmux session where you can run commands
+        sudo tmux new-session -d -s persistent_session
+        sudo tmux send-keys -t persistent_session "echo 'Welcome to your persistent SSH session!'" C-m
+        sudo tmux send-keys -t persistent_session "echo 'Run your commands here. Use Ctrl+b d to detach.'" C-m
+        sudo tmux send-keys -t persistent_session "bash" C-m # Ensure bash is running in the session
+        
+        echo "Tmux session 'persistent_session' started."
+        
+        # Keep the GitHub Actions step alive.
+        # We use a simple sleep for the duration, this will block the step.
+        # While this is sleeping, you can connect via SSH and interact with tmux.
+        MAX_DURATION_SECONDS=$(( ${{ github.event.inputs.session_duration_minutes }} * 60 ))
+        echo "Holding job open for $MAX_DURATION_SECONDS seconds..."
+        sleep $MAX_DURATION_SECONDS || true # '|| true' ensures the step doesn't fail if sleep is interrupted
+        
+        echo "Job duration reached. This runner will now be destroyed."
+      shell: bash
+
+    - name: Final cleanup (optional)
+      if: always()
+      run: |
+        echo "Performing final cleanup before runner destruction."
+        # Note: Most cleanup is not strictly necessary as the runner is destroyed
+        # but you might want to remove sensitive files if any were created outside of /tmp
+      shell: bash
