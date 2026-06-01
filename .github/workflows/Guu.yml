@@ -1,4 +1,4 @@
- # .github/workflows/hosted-persistent-ssh.yml
+# .github/workflows/hosted-persistent-ssh.yml
 name: Hosted Persistent SSH Session
 
 on:
@@ -13,7 +13,8 @@ on:
 jobs:
   interactive_ssh_session:
     runs-on: ubuntu-latest # Standard Linux GitHub Hosted Runner
-    timeout-minutes: ${{ github.event.inputs.session_duration_minutes }} # Set job timeout to match requested duration
+    # FIX APPLIED HERE: Explicitly cast to integer
+    timeout-minutes: ${{ github.event.inputs.session_duration_minutes | int }} 
     
     steps:
     - name: Set up SSH server and Tmux
@@ -69,7 +70,8 @@ jobs:
         echo "Once connected, attach to the tmux session:"
         echo "  tmux attach-session -t persistent_session"
         echo " "
-        echo "This job will run for a maximum of ${{ github.event.inputs.session_duration_minutes }} minutes."
+        # Ensure the `MAX_DURATION_SECONDS` also correctly converts the input to int
+        echo "This job will run for a maximum of ${{ github.event.inputs.session_duration_minutes | int }} minutes."
         echo "=========================================================="
         
         # Start a detached tmux session where you can run commands
@@ -83,9 +85,9 @@ jobs:
         # Keep the GitHub Actions step alive.
         # We use a simple sleep for the duration, this will block the step.
         # While this is sleeping, you can connect via SSH and interact with tmux.
-        MAX_DURATION_SECONDS=$(( ${{ github.event.inputs.session_duration_minutes }} * 60 ))
+        MAX_DURATION_SECONDS=$(( ${{ github.event.inputs.session_duration_minutes | int }} * 60 ))
         echo "Holding job open for $MAX_DURATION_SECONDS seconds..."
-        sleep $MAX_DURATION_SECONDS || true # '|| true' ensures the step doesn't fail if sleep is interrupted
+        sleep $MAX_DURATION_SECONDS || true
         
         echo "Job duration reached. This runner will now be destroyed."
       shell: bash
@@ -94,6 +96,3 @@ jobs:
       if: always()
       run: |
         echo "Performing final cleanup before runner destruction."
-        # Note: Most cleanup is not strictly necessary as the runner is destroyed
-        # but you might want to remove sensitive files if any were created outside of /tmp
-      shell: bash
