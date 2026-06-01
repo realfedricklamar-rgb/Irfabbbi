@@ -18,7 +18,7 @@ jobs:
     steps:
     - name: Configure SSH and Tmux Environment
       run: |
-        sudo apt-get update && sudo apt-get install -y openssh-server tmux
+        sudo apt-get update && sudo apt-get install -y openssh-server tmux jq
         
         # Security & access tweaks for direct root access during this interactive session
         sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
@@ -31,9 +31,15 @@ jobs:
 
     - name: Install and Configure Ngrok
       run: |
-        curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.dev/ngrok.asc >/dev/null
-        echo "deb https://ngrok-agent.s3.amazonaws.com/ buster main" | sudo tee /etc/apt/sources.list.dev/ngrok.list
-        sudo apt-get update && sudo apt-get install ngrok
+        # Fix & Modernize: Download gpg key directly into a dedicated keyring directory
+        sudo mkdir -p /usr/share/keyrings
+        curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo gpg --dearmor -o /usr/share/keyrings/ngrok.gpg
+        
+        # Add the repository pointing strictly to the new keyring
+        echo "deb [signed-by=/usr/share/keyrings/ngrok.gpg] https://ngrok-agent.s3.amazonaws.com/ buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+        
+        # Install Ngrok agent
+        sudo apt-get update && sudo apt-get install -y ngrok
         
         # Authenticate using the repository secret
         ngrok config add-authtoken "${{ secrets.NGROK_AUTHTOKEN }}"
@@ -72,7 +78,6 @@ jobs:
         PUBLIC_ADDRESS=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
         
         # Parse out the public domain/IP and custom port assigned by Ngrok
-        # Ngrok returns tcp://0.tcp.ngrok.io:12345 -> we split this up
         CLEAN_ADDRESS=$(echo $PUBLIC_ADDRESS | sed 's/tcp:\/\///')
         TUNNEL_HOST=$(echo $CLEAN_ADDRESS | cut -d':' -f1)
         TUNNEL_PORT=$(echo $CLEAN_ADDRESS | cut -d':' -f2)
