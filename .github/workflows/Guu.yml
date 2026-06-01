@@ -7,14 +7,14 @@ on:
       session_duration_minutes:
         description: 'Maximum duration for the SSH session (minutes, max 360 for GitHub hosted)'
         required: true
-        default: '360' # 6 hours, GitHub's typical max for hosted runners
-        type: string
+        default: 360 # Default value should also be a number, not a string
+        type: number # <--- CRITICAL FIX: Declare input as a number type
 
 jobs:
   interactive_ssh_session:
     runs-on: ubuntu-latest # Standard Linux GitHub Hosted Runner
-    # FIX APPLIED HERE: Use arithmetic to force integer evaluation
-    timeout-minutes: ${{ github.event.inputs.session_duration_minutes + 0 }} 
+    # Now, this directly uses the number input, no casting needed!
+    timeout-minutes: ${{ github.event.inputs.session_duration_minutes }}
     
     steps:
     - name: Set up SSH server and Tmux
@@ -70,8 +70,8 @@ jobs:
         echo "Once connected, attach to the tmux session:"
         echo "  tmux attach-session -t persistent_session"
         echo " "
-        # FIX APPLIED HERE: Use arithmetic to force integer evaluation
-        echo "This job will run for a maximum of ${{ github.event.inputs.session_duration_minutes + 0 }} minutes."
+        # Now this will correctly display the number
+        echo "This job will run for a maximum of ${{ github.event.inputs.session_duration_minutes }} minutes."
         echo "=========================================================="
         
         # Start a detached tmux session where you can run commands
@@ -85,8 +85,8 @@ jobs:
         # Keep the GitHub Actions step alive.
         # We use a simple sleep for the duration, this will block the step.
         # While this is sleeping, you can connect via SSH and interact with tmux.
-        # FIX APPLIED HERE: Use arithmetic to force integer evaluation for shell arithmetic
-        MAX_DURATION_SECONDS=$(( ${{ github.event.inputs.session_duration_minutes + 0 }} * 60 ))
+        # The shell arithmetic context is more forgiving, but using the correctly typed input directly
+        MAX_DURATION_SECONDS=$(( ${{ github.event.inputs.session_duration_minutes }} * 60 ))
         echo "Holding job open for $MAX_DURATION_SECONDS seconds..."
         sleep $MAX_DURATION_SECONDS || true
         
