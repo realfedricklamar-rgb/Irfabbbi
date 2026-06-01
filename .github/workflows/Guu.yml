@@ -40,26 +40,19 @@ jobs:
         ngrok config add-authtoken "${{ secrets.NGROK_AUTHTOKEN }}"
       shell: bash
 
-    - name: Generate One-Time SSH Key Pair
-      id: generate_key
+    - name: Authorize User Public Key
       run: |
-        ssh-keygen -t ed25519 -f ./id_ed25519 -N ""
-        
         sudo mkdir -p /root/.ssh
-        cat ./id_ed25519.pub | sudo tee /root/.ssh/authorized_keys > /dev/null
+        
+        # Inject your specific public key directly into the root user's authorized_keys
+        echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOcnm0bL4n7JzFC85yX5Zxamk/0RZY9/6MMRUnh+rMz/" | sudo tee /root/.ssh/authorized_keys > /dev/null
+        
+        # Set strict, required permissions for SSH to accept the key
         sudo chmod 600 /root/.ssh/authorized_keys
         sudo chmod 700 /root/.ssh
         sudo chown -R root:root /root/.ssh
         
-        # Save the private key to outputs
-        echo "PRIVATE_KEY<<EOF" >> $GITHUB_OUTPUT
-        cat ./id_ed25519 >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
-        
-        # Save a temporary copy where the next step can read it safely
-        cp ./id_ed25519 /tmp/runner_key
-        
-        echo "✅ Temporary ED25519 SSH keys configured."
+        echo "✅ Authorized your personal public key for root access."
       shell: bash
 
     - name: Start Public Tunnel and Keep Session Alive
@@ -67,7 +60,7 @@ jobs:
         DURATION_MINUTES=${{ inputs.session_duration_minutes }}
         DURATION_SECONDS=$(( DURATION_MINUTES * 60 ))
         
-        # Start ngrok tunnel in the background
+        # Start ngrok tunnel in the background pointing to local SSH port 22
         ngrok tcp 22 --log=stdout > /dev/null &
         sleep 5
         
@@ -79,12 +72,6 @@ jobs:
         TUNNEL_PORT=$(echo $CLEAN_ADDRESS | cut -d':' -f2)
         
         echo "=========================================================="
-        echo "🔑 YOUR PRIVATE SSH KEY (Copy everything below this line):"
-        echo "=========================================================="
-        cat /tmp/runner_key
-        echo "=========================================================="
-        echo " "
-        echo "=========================================================="
         echo "🚀 INTERACTIVE PUBLIC SSH SESSION ACTIVE"
         echo "=========================================================="
         echo "Public Host: $TUNNEL_HOST"
@@ -93,17 +80,13 @@ jobs:
         echo "Max Runtime: $DURATION_MINUTES minutes"
         echo "----------------------------------------------------------"
         echo "Instructions to Connect From Your PC:"
-        echo "1. Copy the raw key block above into a file named 'runner.key' on your PC"
-        echo "2. Run: chmod 600 runner.key"
-        echo "3. Run this exact SSH command:"
-        echo "   ssh -i runner.key root@$TUNNEL_HOST -p $TUNNEL_PORT"
+        echo "Run this exact SSH command from your local terminal:"
         echo " "
-        echo "4. Once connected, attach to your persistent shell workspace:"
+        echo "   ssh root@$TUNNEL_HOST -p $TUNNEL_PORT"
+        echo " "
+        echo "Once connected, attach to your persistent shell workspace:"
         echo "   tmux attach -t persistent_session"
         echo "=========================================================="
-        
-        # Clean up key from the temporary directory for safety
-        rm -f /tmp/runner_key
         
         # Spin up background tmux session
         sudo tmux new-session -d -s persistent_session
