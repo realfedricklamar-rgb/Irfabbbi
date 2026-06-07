@@ -1,10 +1,10 @@
-name: Hosted Persistent Windows SSH Session
+name: Hosted Persistent Windows SSH & App Session
 
 on:
   workflow_dispatch:
     inputs:
       session_duration_minutes:
-        description: 'Maximum duration for the SSH session (minutes, max 360)'
+        description: 'Maximum duration for the session (minutes, max 360)'
         required: true
         default: 360
         type: number
@@ -18,88 +18,92 @@ jobs:
     - name: Configure Clean SSH Environment
       shell: powershell
       run: |
-        # Ensure OpenSSH Server is installed and running
         Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 -ErrorAction SilentlyContinue
-        
-        # Start and configure the sshd service
         Start-Service sshd
         Set-Service -Name sshd -StartupType 'Automatic'
         
-        # Enforce public-key authentication via the sshd_config file
         $sshdConfigPath = "$env:ProgramData\ssh\sshd_config"
         (Get-Content $sshdConfigPath) -replace '#PubkeyAuthentication yes', 'PubkeyAuthentication yes' | Set-Content $sshdConfigPath
-        
-        # Restart service to apply changes
         Restart-Service sshd
         Write-Host "✅ OpenSSH Daemon running on Windows."
 
     - name: Install and Configure Ngrok
       shell: powershell
       run: |
-        # Use Chocolatey (pre-installed on GitHub Windows runners) to quickly grab Ngrok
         choco install ngrok -y
-        
-        # Configure the authtoken
+        # Authenticate ngrok globally
         & ngrok config add-authtoken "${{ secrets.NGROK_AUTHTOKEN }}"
-        Write-Host "✅ Ngrok configured."
+        Write-Host "✅ Ngrok installed."
 
     - name: Authorize Your Personal Public Key
       shell: powershell
       run: |
-        # On Windows, standard users store their keys in user profile .ssh
         $sshDir = "$env:USERPROFILE\.ssh"
         if (!(Test-Path $sshDir)) { New-Item -ItemType Directory -Path $sshDir }
         
         $pubKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOcnm0bL4n7JzFC85yX5Zxamk/0RZY9/6MMRUnh+rMz/"
         Set-Content -Path "$sshDir\authorized_keys" -Value $pubKey -Encoding utf8
         
-        # CRITICAL WINDOWS OPENSSH STEP:
-        # By default, Windows OpenSSH redirects administrators to a global authorized_keys file.
-        # We need to fix the sshd_config to allow the user-level authorized_keys to work.
         $sshdConfigPath = "$env:ProgramData\ssh\sshd_config"
         $config = Get-Content $sshdConfigPath
-        
-        # Comment out the administrative public key override lines
         $config = $config -replace 'Match Group administrators', '#Match Group administrators'
         $config = $config -replace 'AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys', '#AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys'
         Set-Content $sshdConfigPath $config
         
-        # Apply the fix by restarting sshd
         Restart-Service sshd
         Write-Host "✅ Public key authorized for user: runneradmin"
 
-    - name: Establish Public Tunnel and Hold Session Open
+    - name: Establish Public Tunnels and Hold Session Open
       shell: powershell
       run: |
         $DurationMinutes = ${{ inputs.session_duration_minutes }}
         $DurationSeconds = $DurationMinutes * 60
         
-        # Spin up Ngrok TCP tunnel pointing to standard SSH port 22 in the background
-        Start-Process -FilePath "ngrok" -ArgumentList "tcp 22" -WindowStyle Hidden
+        # 1. Create a Ngrok configuration file defining both tunnels
+        # Note: If your app on 3000 expects HTTP/HTTPS traffic, use proto: http
+        $ngrokConfig = @"
+        version: "2"
+        authtoken: "${{ secrets.NGROK_AUTHTOKEN }}"
+        tunnels:
+          ssh-tunnel:
+            proto: tcp
+            addr: 22
+          app-tunnel:
+            proto: tcp
+            addr: 3389
+        "@
+        
+        $configPath = "$env:USERPROFILE\.ngrok_dual_config.yml"
+        Set-Content -Path $configPath -Value $ngrokConfig
+        
+        # 2. Spin up Ngrok pointing to our custom configuration and start ALL defined tunnels
+        Start-Process -FilePath "ngrok" -ArgumentList "start --all --config=$configPath" -WindowStyle Hidden
         Start-Sleep -Seconds 7
         
-        # Query local Ngrok API endpoint using PowerShell native Invoke-RestMethod
+        # 3. Query the local Ngrok API endpoint to grab BOTH public URLs
         $NgrokApi = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
-        $PublicAddress = $NgrokApi.tunnels[0].public_url
         
-        # Parse host and port strings
-        $CleanAddress = $PublicAddress -replace "tcp://", ""
-        $TunnelHost = $CleanAddress.Split(":")[0]
-        $TunnelPort = $CleanAddress.Split(":")[1]
+        # Parse SSH Details (finding the tunnel named 'ssh-tunnel')
+        $SshTunnel = $NgrokApi.tunnels | Where-Object { $_.name -eq "ssh-tunnel" }
+        $CleanSshAddress = $SshTunnel.public_url -replace "tcp://", ""
+        $TunnelHost = $CleanSshAddress.Split(":")[0]
+        $TunnelPort = $CleanSshAddress.Split(":")[1]
+        
+        # Parse App Details (finding the tunnel named 'app-tunnel')
+        $AppTunnel = $NgrokApi.tunnels | Where-Object { $_.name -eq "app-tunnel" }
+        $AppUrl = $AppTunnel.public_url
         
         Write-Host "=========================================================="
-        Write-Host "🚀 WINDOWS SSH ENVIRONMENT IS NOW ONLINE"
+        Write-Host "🚀 DUAL PORT TUNNEL ENVIRONMENT IS NOW ONLINE"
         Write-Host "=========================================================="
-        Write-Host "Host String: $TunnelHost"
-        Write-Host "Target Port: $TunnelPort"
-        Write-Host "User Profile: runneradmin"
-        Write-Host "=========================================================="
-        Write-Host "Run this exact command in your terminal right now:"
-        Write-Host " "
-        Write-Host "   ssh runneradmin@$TunnelHost -p $TunnelPort"
+        Write-Host "🔒 [SSH ACCESS]"
+        Write-Host "   Command:  ssh runneradmin@$TunnelHost -p $TunnelPort"
+        Write-Host "----------------------------------------------------------"
+        Write-Host "🌐 [APP ACCESS (PORT 3389)]"
+        Write-Host "   URL:      $AppUrl"
         Write-Host "=========================================================="
         
-        Write-Host "⏳ Tunnel active. Awaiting connection..."
+        Write-Host "⏳ Tunnels active. Awaiting connection..."
         Start-Sleep -Seconds $DurationSeconds
 
     - name: Graceful Teardown
