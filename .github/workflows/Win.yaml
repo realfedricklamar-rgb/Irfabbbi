@@ -25,7 +25,7 @@ jobs:
         $sshdConfigPath = "$env:ProgramData\ssh\sshd_config"
         (Get-Content $sshdConfigPath) -replace '#PubkeyAuthentication yes', 'PubkeyAuthentication yes' | Set-Content $sshdConfigPath
         Restart-Service sshd
-        Write-Host "✅ OpenSSH Daemon running on Windows."
+        Write-Host "OpenSSH Daemon running on Windows."
 
     - name: Install and Configure Ngrok
       shell: powershell
@@ -33,7 +33,7 @@ jobs:
         choco install ngrok -y
         # Authenticate ngrok globally
         & ngrok config add-authtoken "${{ secrets.NGROK_AUTHTOKEN }}"
-        Write-Host "✅ Ngrok installed."
+        Write-Host "Ngrok installed."
 
     - name: Authorize Your Personal Public Key
       shell: powershell
@@ -51,7 +51,7 @@ jobs:
         Set-Content $sshdConfigPath $config
         
         Restart-Service sshd
-        Write-Host "✅ Public key authorized for user: runneradmin"
+        Write-Host "Public key authorized for user: runneradmin"
 
     - name: Establish Public Tunnels and Hold Session Open
       shell: powershell
@@ -60,7 +60,6 @@ jobs:
         $DurationSeconds = $DurationMinutes * 60
         
         # 1. Create a Ngrok configuration file defining both tunnels
-        # Note: If your app on 3000 expects HTTP/HTTPS traffic, use proto: http
         $ngrokConfig = @"
         version: "2"
         authtoken: "${{ secrets.NGROK_AUTHTOKEN }}"
@@ -69,8 +68,8 @@ jobs:
             proto: tcp
             addr: 22
           app-tunnel:
-            proto: http
-            addr: 3000
+            proto: tcp
+            addr: 3389
         "@
         
         $configPath = "$env:USERPROFILE\.ngrok_dual_config.yml"
@@ -94,16 +93,16 @@ jobs:
         $AppUrl = $AppTunnel.public_url
         
         Write-Host "=========================================================="
-        Write-Host "🚀 DUAL PORT TUNNEL ENVIRONMENT IS NOW ONLINE"
+        Write-Host " DUAL PORT TUNNEL ENVIRONMENT IS NOW ONLINE"
         Write-Host "=========================================================="
-        Write-Host "🔒 [SSH ACCESS]"
+        Write-Host " [SSH ACCESS]"
         Write-Host "   Command:  ssh runneradmin@$TunnelHost -p $TunnelPort"
         Write-Host "----------------------------------------------------------"
-        Write-Host "🌐 [APP ACCESS (PORT 3000)]"
+        Write-Host " [APP ACCESS (PORT 3389)]"
         Write-Host "   URL:      $AppUrl"
         Write-Host "=========================================================="
         
-        Write-Host "⏳ Tunnels active. Awaiting connection..."
+        Write-Host " Tunnel active. Awaiting connection..."
         Start-Sleep -Seconds $DurationSeconds
 
     - name: Graceful Teardown
