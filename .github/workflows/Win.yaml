@@ -69,8 +69,8 @@ jobs:
             proto: tcp
             addr: 22
           app-tunnel:
-            proto: tcp
-            addr: 3389
+            proto: http
+            addr: 3000
         "@
         
         $configPath = "$env:USERPROFILE\.ngrok_dual_config.yml"
@@ -99,7 +99,7 @@ jobs:
         Write-Host "🔒 [SSH ACCESS]"
         Write-Host "   Command:  ssh runneradmin@$TunnelHost -p $TunnelPort"
         Write-Host "----------------------------------------------------------"
-        Write-Host "🌐 [APP ACCESS (PORT 3389)]"
+        Write-Host "🌐 [APP ACCESS (PORT 3000)]"
         Write-Host "   URL:      $AppUrl"
         Write-Host "=========================================================="
         
